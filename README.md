@@ -75,6 +75,18 @@ export BACKEND_URL=wss://api.example.com
 bash install.sh
 ```
 
+### Local test (monorepo + `playground/`)
+
+If your checkout is the **full monorepo** with a git repo in `playground/` next to `server-packages/`, run the agent from `server-packages` so only that folder is scanned (skips `/var/www` and `/home`):
+
+```bash
+cd server-packages
+export BACKEND_URL=ws://localhost:3001
+npm run start:local
+```
+
+This sets `SCAN_DIRS` to `…/playground` and `LOCAL_PLAYGROUND_ONLY=1`.
+
 ## Service
 
 ```bash

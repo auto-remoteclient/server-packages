@@ -7,6 +7,12 @@ const SCAN_DIRS = [
   '/home'
 ];
 
+function resolveScanDir(d) {
+  const t = String(d).trim();
+  if (!t) return null;
+  return path.isAbsolute(t) ? t : path.resolve(process.cwd(), t);
+}
+
 function findGitRepos(baseDir, maxDepth = 3) {
   const repos = [];
   if (!fs.existsSync(baseDir)) return repos;
@@ -63,9 +69,11 @@ function getRepoInfo(repoPath) {
 async function scanProjects() {
   const allRepos = [];
 
-  // Also check custom dirs from env
-  const extraDirs = process.env.SCAN_DIRS ? process.env.SCAN_DIRS.split(',') : [];
-  const dirsToScan = [...SCAN_DIRS, ...extraDirs];
+  const extraParts = process.env.SCAN_DIRS ? process.env.SCAN_DIRS.split(',') : [];
+  const extraDirs = extraParts.map(resolveScanDir).filter(Boolean);
+  const defaults =
+    process.env.LOCAL_PLAYGROUND_ONLY === '1' ? [] : SCAN_DIRS;
+  const dirsToScan = [...new Set([...defaults, ...extraDirs])];
 
   for (const dir of dirsToScan) {
     const repos = findGitRepos(dir);
