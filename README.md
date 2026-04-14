@@ -1,67 +1,89 @@
 # Remote Dev Agent (Linux)
 
-Şirket backend’inize WebSocket ile bağlanan Node agent. Son kullanıcı kendi sunucusunda kurar.
+Node agent that connects to your company backend over WebSocket. End users install it on their own Linux server.
 
-## Gereksinimler
+Repository: [github.com/auto-remoteclient/server-packages](https://github.com/auto-remoteclient/server-packages)
 
-- Linux + `systemd`
+## Requirements
+
+- Linux with `systemd`
 - `curl`, `tar`, `bash`
 - Node.js 18+
 
-## Tek komut kurulum
+## One-line install (public repo)
 
-1. **Repoda bir kez:** `install.sh` içindeki `DEFAULT_ARCHIVE_URL` satırını, bu monoreponun GitHub **archive** adresiyle değiştirin (repo herkese açık olmalı veya kurulumda `INSTALL_ARCHIVE_URL` kullanın):
-
-   `https://github.com/ORG/REPO/archive/refs/heads/main.tar.gz`
-
-2. **Kullanıcı sunucusunda** (BACKEND_URL = sizin `wss://` backend adresiniz):
+On the user’s server, set `BACKEND_URL` to your WebSocket URL (`wss://...`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ORG/REPO/main/server-packages/install.sh | env BACKEND_URL=wss://api.sirketiniz.com bash
+curl -fsSL https://raw.githubusercontent.com/auto-remoteclient/server-packages/main/install.sh | env BACKEND_URL=wss://api.example.com bash
 ```
 
-`ORG/REPO` ve branch adını kendi repoya göre düzenleyin.
+The script downloads this repo’s source tarball, installs dependencies, and registers a `systemd` service.
 
-### İsteğe bağlı ortam değişkenleri
+### Optional environment variables
 
-| Değişken | Açıklama |
-|----------|----------|
-| `BACKEND_URL` | **Zorunlu.** Şirket backend WebSocket URL’si (`wss://...`). |
-| `INSTALL_ARCHIVE_URL` | Repo kökü arşivi; `DEFAULT_ARCHIVE_URL` yerine kullanılır. |
-| `INSTALL_DIR` | Varsayılan: `$HOME/.remote-dev-agent` |
-| `SCAN_DIRS` | Taranacak dizinler, virgülle. Varsayılan: `/var/www,/home/$USER/projects` |
+| Variable | Description |
+|----------|-------------|
+| `BACKEND_URL` | **Required.** Your backend WebSocket URL (`wss://...`). |
+| `INSTALL_ARCHIVE_URL` | Source tarball URL, or absolute path to a local `.tar.gz` file. Defaults to this repo’s GitHub archive. |
+| `GITHUB_TOKEN` | For private GitHub archives or raw URLs: sent as `Authorization: Bearer`. |
+| `INSTALL_DIR` | Install location. Default: `$HOME/.remote-dev-agent` |
+| `SCAN_DIRS` | Comma-separated directories to scan for projects. Default: `/var/www,/home/$USER/projects` |
 
-Örnek:
+Example with extra scan paths:
 
 ```bash
-curl -fsSL .../install.sh | env \
-  BACKEND_URL=wss://api.sirketiniz.com \
-  INSTALL_ARCHIVE_URL=https://github.com/acme/monorepo/archive/refs/heads/main.tar.gz \
+curl -fsSL https://raw.githubusercontent.com/auto-remoteclient/server-packages/main/install.sh | env \
+  BACKEND_URL=wss://api.example.com \
   SCAN_DIRS=/home/deploy/repos,/var/www \
   bash
 ```
 
-## Elle / git ile geliştirme
+## Private GitHub repository
 
-Repoyu klonlayıp:
+Unauthenticated requests to `raw.githubusercontent.com` and `github.com/.../archive/...` return 404 for private repos. Options:
+
+**1) Fine-grained PAT (recommended)**  
+Create a token with **Contents: Read** for that repo only. On the server, export it for the session only (do not hardcode in scripts):
 
 ```bash
+export GITHUB_TOKEN=ghp_xxxxxxxx
+ARCHIVE="https://github.com/OWNER/REPO/archive/refs/heads/main.tar.gz"
+RAW="https://raw.githubusercontent.com/OWNER/REPO/main/install.sh"
+
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$RAW" | \
+  env BACKEND_URL=wss://api.example.com \
+      GITHUB_TOKEN="$GITHUB_TOKEN" \
+      INSTALL_ARCHIVE_URL="$ARCHIVE" \
+      bash
+```
+
+**2) Copy the archive yourself**  
+Download the `.tar.gz` locally or in CI, `scp` it to the server, then:
+
+```bash
+env BACKEND_URL=wss://api.example.com INSTALL_ARCHIVE_URL=/path/to/repo.tar.gz bash install.sh
+```
+
+## Development (clone + run)
+
+```bash
+git clone https://github.com/auto-remoteclient/server-packages.git
 cd server-packages
-export BACKEND_URL=wss://...
-# install.sh içinde DEFAULT_ARCHIVE_URL doğruysa:
+export BACKEND_URL=wss://api.example.com
 bash install.sh
 ```
 
-## Servis
+## Service
 
 ```bash
 sudo systemctl status remote-dev-agent
 journalctl -u remote-dev-agent -f
 ```
 
-Pairing kodu: `cat ~/.remote-dev-agent/.agent-config.json`
+Pairing code: `cat ~/.remote-dev-agent/.agent-config.json`
 
-## Özel durumlar
+## Notes
 
-- **Private repo:** Arşivi token ile indirip `INSTALL_ARCHIVE_URL` yerine dosya yolunu kullanmak veya scripti repoya gömülü dağıtmak gerekir; ham `curl | bash` public raw ile çalışmaz.
-- **systemd yok:** `install.sh` şu an yalnızca systemd yazar; container/WSL için `npm start` ile manuel çalıştırıp `BACKEND_URL` export edin (ileride `INSTALL_SKIP_SYSTEMD=1` eklenebilir).
+- **No systemd** (containers, some WSL setups): run `npm start` with `BACKEND_URL` set instead of using `install.sh` as-is.
+- This install path supports both **this standalone repo** (archive root contains `package.json`) and a **monorepo** tarball where the agent lives under a `server-packages/` directory.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "================================="
-echo "  Remote Dev Agent — kurulum"
+echo "  Remote Dev Agent — install"
 echo "================================="
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.remote-dev-agent}"
@@ -13,7 +13,7 @@ trap cleanup EXIT
 
 require_cmd() {
   if ! command -v "$1" &>/dev/null; then
-    echo "[error] Gerekli komut yok: $1"
+    echo "[error] Required command not found: $1"
     exit 1
   fi
 }
@@ -22,43 +22,61 @@ require_cmd curl
 require_cmd tar
 
 if ! command -v node &>/dev/null; then
-  echo "[error] Node.js gerekli. Örnek (Debian/Ubuntu):"
+  echo "[error] Node.js is required. Example (Debian/Ubuntu):"
   echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
   echo "  sudo apt-get install -y nodejs"
   exit 1
 fi
 
 if [ -z "${BACKEND_URL:-}" ]; then
-  echo "[error] BACKEND_URL tanımlı değil."
-  echo "  Şirket backend WebSocket adresiniz, örn: wss://api.sirketiniz.com"
+  echo "[error] BACKEND_URL is not set."
+  echo "  Your company backend WebSocket URL, e.g.: wss://api.example.com"
   echo ""
-  echo "  Tek satır örnek:"
-  echo "    curl -fsSL <install.sh-URL> | env BACKEND_URL=wss://api.sirketiniz.com bash"
+  echo "  One-liner example:"
+  echo "    curl -fsSL https://raw.githubusercontent.com/auto-remoteclient/server-packages/main/install.sh | env BACKEND_URL=wss://api.example.com bash"
   exit 1
 fi
 
-# Yayıncı: repoda bu varsayılanı kendi archive URL'niz ile değiştirin (opsiyonel).
-# Kurulum anında: INSTALL_ARCHIVE_URL=... ile override edilir.
-DEFAULT_ARCHIVE_URL="${DEFAULT_ARCHIVE_URL:-https://github.com/YOUR_ORG/auto-remoteclient/archive/refs/heads/main.tar.gz}"
+# Default: this repository’s source archive. Override at install time with INSTALL_ARCHIVE_URL=...
+DEFAULT_ARCHIVE_URL="${DEFAULT_ARCHIVE_URL:-https://github.com/auto-remoteclient/server-packages/archive/refs/heads/main.tar.gz}"
 INSTALL_ARCHIVE_URL="${INSTALL_ARCHIVE_URL:-$DEFAULT_ARCHIVE_URL}"
 
-if [[ "$INSTALL_ARCHIVE_URL" == *"YOUR_ORG"* ]] || [[ "$INSTALL_ARCHIVE_URL" == *"YOUR_"* ]]; then
-  echo "[error] install.sh içindeki DEFAULT_ARCHIVE_URL henüz gerçek repo adresiyle güncellenmemiş,"
-  echo "  veya kurulumda şunu verin:"
-  echo "    INSTALL_ARCHIVE_URL=https://github.com/ORG/REPO/archive/refs/heads/main.tar.gz"
-  exit 1
-fi
-
-echo "[info] Hedef dizin: $INSTALL_DIR"
-echo "[info] Arşiv: $INSTALL_ARCHIVE_URL"
+echo "[info] Install directory: $INSTALL_DIR"
+echo "[info] Archive: $INSTALL_ARCHIVE_URL"
 
 ARCHIVE_FILE="$TMP/repo.tar.gz"
-curl -fsSL "$INSTALL_ARCHIVE_URL" -o "$ARCHIVE_FILE"
+if [[ "$INSTALL_ARCHIVE_URL" == /* ]] || [[ "$INSTALL_ARCHIVE_URL" == file://* ]]; then
+  LOCAL_PATH="${INSTALL_ARCHIVE_URL#file://}"
+  if [[ ! -f "$LOCAL_PATH" ]]; then
+    echo "[error] Archive file not found: $LOCAL_PATH"
+    exit 1
+  fi
+  cp "$LOCAL_PATH" "$ARCHIVE_FILE"
+else
+  CURL_AUTH=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CURL_AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  fi
+  curl -fsSL "${CURL_AUTH[@]}" -L "$INSTALL_ARCHIVE_URL" -o "$ARCHIVE_FILE"
+fi
 tar -xzf "$ARCHIVE_FILE" -C "$TMP"
 
-PKG_DIR=$(find "$TMP" -maxdepth 5 -type d -name server-packages 2>/dev/null | head -1)
+# Monorepo layout: .../server-packages/package.json — standalone repo: .../server-packages-main/package.json
+PKG_DIR=""
+while IFS= read -r -d '' d; do
+  if [[ -f "$d/package.json" ]]; then
+    PKG_DIR="$d"
+    break
+  fi
+done < <(find "$TMP" -maxdepth 5 -type d -name server-packages -print0 2>/dev/null)
+if [[ -z "$PKG_DIR" ]]; then
+  TOP=$(find "$TMP" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
+  if [[ -n "$TOP" && -f "$TOP/package.json" ]]; then
+    PKG_DIR="$TOP"
+  fi
+fi
 if [ -z "$PKG_DIR" ] || [ ! -f "$PKG_DIR/package.json" ]; then
-  echo "[error] Arşivde server-packages/ bulunamadı. Repo yapısını kontrol edin."
+  echo "[error] Could not find the agent package (package.json) inside the archive."
   exit 1
 fi
 
@@ -73,7 +91,7 @@ npm install --omit=dev
 NODE_BIN=$(command -v node)
 SCAN_DIRS_VALUE="${SCAN_DIRS:-/var/www,/home/$USER/projects}"
 
-echo "[info] systemd servisi yazılıyor (sudo gerekir)..."
+echo "[info] Writing systemd unit (sudo required)..."
 sudo tee /etc/systemd/system/remote-dev-agent.service >/dev/null <<EOF
 [Unit]
 Description=Remote Dev Agent
@@ -101,11 +119,11 @@ sudo systemctl restart remote-dev-agent
 
 echo ""
 echo "================================="
-echo "  Kurulum tamam"
+echo "  Install complete"
 echo "================================="
-echo "Dizin:        $INSTALL_DIR"
-echo "BACKEND_URL:  $BACKEND_URL"
-echo "Servis:       sudo systemctl status remote-dev-agent"
-echo "Log:          journalctl -u remote-dev-agent -f"
-echo "Pairing:      cat $INSTALL_DIR/.agent-config.json"
+echo "Directory:   $INSTALL_DIR"
+echo "BACKEND_URL: $BACKEND_URL"
+echo "Service:     sudo systemctl status remote-dev-agent"
+echo "Logs:        journalctl -u remote-dev-agent -f"
+echo "Pairing:     cat $INSTALL_DIR/.agent-config.json"
 echo ""
