@@ -4,6 +4,7 @@ const { WebSocket } = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const { scanProjects } = require('./scanner');
 const { runTask } = require('./task-runner');
+const terminal = require('./terminal');
 const fs = require('fs');
 const path = require('path');
 
@@ -55,7 +56,9 @@ function connect() {
       return;
     }
 
-    console.log(`[ws] Received: ${msg.type}`);
+    if (typeof msg.type === 'string' && msg.type.startsWith('terminal_')) {
+      console.log('[agent] terminal', msg.type);
+    }
 
     switch (msg.type) {
       case 'list_projects':
@@ -80,11 +83,55 @@ function connect() {
         }
         currentTask = null;
         break;
+
+      // --- Terminal messages ---
+      case 'terminal_start':
+        terminal.stopPolling();
+        terminal.startPolling((output) => {
+          send(output);
+        }, 450);
+        if (msg.projectPath) {
+          setTimeout(() => terminal.cdIntoProject(msg.projectPath), 500);
+        }
+        break;
+
+      case 'terminal_stop':
+        terminal.stopPolling();
+        break;
+
+      case 'terminal_input':
+        terminal.sendInteractiveInput(msg.data);
+        break;
+
+      case 'terminal_raw_keys':
+        terminal.sendRawKeys(msg.keys);
+        break;
+
+      case 'terminal_resize':
+        if (msg.cols && msg.rows) {
+          terminal.resizePane(msg.cols, msg.rows);
+        }
+        break;
+
+      case 'terminal_run_claude': {
+        const p = msg.projectPath || '.';
+        if (!terminal.isPollingActive()) {
+          terminal.stopPolling();
+          terminal.startPolling((output) => {
+            send(output);
+          }, 450);
+          setTimeout(() => terminal.runClaude(p), 1500);
+        } else {
+          terminal.runClaude(p);
+        }
+        break;
+      }
     }
   });
 
   ws.on('close', () => {
     console.log('[ws] Disconnected. Reconnecting in 5s...');
+    terminal.stopPolling();
     setTimeout(connect, 5000);
   });
 
@@ -101,9 +148,9 @@ function send(data) {
 
 connect();
 
-// Keep alive
 process.on('SIGINT', () => {
   console.log('\nShutting down agent...');
+  terminal.stopPolling();
   if (ws) ws.close();
   process.exit(0);
 });
