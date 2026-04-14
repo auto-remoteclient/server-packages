@@ -98,8 +98,19 @@ function trimTrailingEmptyPaneLines(text) {
   return lines.slice(0, end).join('\n');
 }
 
+function stripInteriorLinesTrailingGridSpaces(text) {
+  const normalized = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  if (lines.length <= 1) return normalized;
+  for (let i = 0; i < lines.length - 1; i++) {
+    lines[i] = lines[i].replace(/ +$/g, '');
+  }
+  return lines.join('\n');
+}
+
 function normalizePaneCapture(text) {
-  return trimTrailingEmptyPaneLines(sanitizePaneText(text));
+  let s = trimTrailingEmptyPaneLines(sanitizePaneText(text));
+  return stripInteriorLinesTrailingGridSpaces(s);
 }
 
 function getOutput() {
@@ -141,10 +152,10 @@ function getOutput() {
   return best;
 }
 
-function emitIfChanged() {
+function emitIfChanged(force) {
   if (!onOutputCb || !polling) return;
   const current = getOutput();
-  if (current === lastOutput) return;
+  if (!force && current === lastOutput) return;
   lastOutput = current;
   onOutputCb({ type: 'terminal_snapshot', data: current });
 }
@@ -153,8 +164,8 @@ function scheduleEmitAfterInput() {
   if (inputFlushTimer) clearTimeout(inputFlushTimer);
   inputFlushTimer = setTimeout(() => {
     inputFlushTimer = null;
-    emitIfChanged();
-  }, 15);
+    emitIfChanged(true);
+  }, 6);
 }
 
 function clearPollInterval() {
@@ -174,7 +185,7 @@ function stopPolling() {
   polling = false;
 }
 
-function startPolling(onOutput, intervalMs = 120) {
+function startPolling(onOutput, intervalMs = 55) {
   clearPollInterval();
   resetTmuxSession();
   polling = true;

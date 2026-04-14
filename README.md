@@ -29,6 +29,7 @@ The script downloads this repo’s source tarball, installs dependencies, and re
 | `GITHUB_TOKEN` | For private GitHub archives or raw URLs: sent as `Authorization: Bearer`. |
 | `INSTALL_DIR` | Install location. Default: `$HOME/.remote-dev-agent` |
 | `SCAN_DIRS` | Comma-separated directories to scan for projects. Default: `/var/www,/home/$USER/projects` |
+| `FRONTEND_PAIR_BASE_URL` | Web UI pairing page base (shown at end of install). Default: `https://promptier.dev/pair` — link becomes `?code=<pairingCode>`. |
 
 Example with extra scan paths:
 

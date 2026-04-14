@@ -117,6 +117,17 @@ sudo systemctl daemon-reload
 sudo systemctl enable remote-dev-agent
 sudo systemctl restart remote-dev-agent
 
+FRONTEND_PAIR_BASE="${FRONTEND_PAIR_BASE_URL:-https://promptier.dev/pair}"
+PAIR_CODE=""
+AGENT_CFG="$INSTALL_DIR/.agent-config.json"
+for _ in {1..20}; do
+  if [ -f "$AGENT_CFG" ]; then
+    PAIR_CODE=$("$NODE_BIN" -e 'const fs=require("fs"); const p=process.argv[1]; try { const j=JSON.parse(fs.readFileSync(p,"utf8")); process.stdout.write(String(j.pairingCode||"")); } catch (e) { process.exit(1); }' "$AGENT_CFG" 2>/dev/null) || PAIR_CODE=""
+    [ -n "$PAIR_CODE" ] && break
+  fi
+  sleep 0.25
+done
+
 echo ""
 echo "================================="
 echo "  Install complete"
@@ -126,4 +137,13 @@ echo "BACKEND_URL: $BACKEND_URL"
 echo "Service:     sudo systemctl status remote-dev-agent"
 echo "Logs:        journalctl -u remote-dev-agent -f"
 echo "Pairing:     cat $INSTALL_DIR/.agent-config.json"
+echo ""
+echo "────────────────────────────────────────────────────────"
+if [ -n "$PAIR_CODE" ]; then
+  echo "Your pair code:     $PAIR_CODE"
+  echo "Your client link:   ${FRONTEND_PAIR_BASE}?code=${PAIR_CODE}"
+else
+  echo "Your pair code:     (read after start)  cat $INSTALL_DIR/.agent-config.json"
+  echo "Your client link:   ${FRONTEND_PAIR_BASE}?code=<pair code>"
+fi
 echo ""
