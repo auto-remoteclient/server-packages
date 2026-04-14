@@ -15,37 +15,55 @@ function exec(cmd, cwd, onLog) {
   }
 }
 
-function spawnAsync(cmd, args, cwd, onLog) {
+function spawnAsync(cmd, args, cwd, onLog, timeoutMs = 600000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdin.end();
     let output = '';
+    let done = false;
+
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        child.kill('SIGTERM');
+        onLog('[timeout] Claude CLI took too long, killing...');
+        reject(new Error('Claude CLI timed out after 10 minutes'));
+      }
+    }, timeoutMs);
 
     child.stdout.on('data', (data) => {
       const line = data.toString();
       output += line;
-      onLog(line.trim());
+      if (line.trim()) onLog(line.trim());
     });
 
     child.stderr.on('data', (data) => {
       const line = data.toString();
       output += line;
-      onLog(line.trim());
+      if (line.trim()) onLog(line.trim());
     });
 
     child.on('close', (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
       if (code === 0) resolve(output);
       else reject(new Error(`Command exited with code ${code}`));
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
 function getGitHubCompareUrl(cwd, baseBranch, newBranch) {
   try {
     const remote = execSync('git remote get-url origin', { cwd, encoding: 'utf-8' }).trim();
-    // Convert git@github.com:owner/repo.git or https://github.com/owner/repo.git
+    // Handle git@github.com:owner/repo.git and https://github.com/owner/repo.git
     let match = remote.match(/github\.com[:/](.+?)(?:\.git)?$/);
     if (match) {
       const ownerRepo = match[1];
@@ -53,104 +71,6 @@ function getGitHubCompareUrl(cwd, baseBranch, newBranch) {
     }
   } catch {}
   return null;
-}
-
-async function startPreview(cwd, onLog) {
-  // Try cloudflared first, then ngrok
-  const port = 3000 + Math.floor(Math.random() * 1000);
-
-  // Check if package.json has a dev script
-  const pkgPath = path.join(cwd, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-    const scripts = pkg.scripts || {};
-
-    onLog(`[preview] Installing dependencies...`);
-    try {
-      execSync('npm install', { cwd, encoding: 'utf-8', timeout: 120000 });
-    } catch {}
-
-    // Start dev server in background
-    const devCmd = scripts.dev ? 'npm run dev' : scripts.start ? 'npm start' : null;
-    if (devCmd) {
-      onLog(`[preview] Starting: ${devCmd} (port ${port})`);
-      const child = spawn('sh', ['-c', `PORT=${port} ${devCmd}`], {
-        cwd,
-        detached: true,
-        stdio: 'ignore'
-      });
-      child.unref();
-
-      // Wait a bit for server to start
-      await new Promise(r => setTimeout(r, 3000));
-    }
-  }
-
-  // Try to create tunnel
-  let previewUrl = null;
-  try {
-    // Try cloudflared
-    onLog('[preview] Creating tunnel with cloudflared...');
-    const tunnelChild = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    previewUrl = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Tunnel timeout')), 15000);
-
-      const handler = (data) => {
-        const line = data.toString();
-        const match = line.match(/(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/);
-        if (match) {
-          clearTimeout(timeout);
-          resolve(match[1]);
-        }
-      };
-
-      tunnelChild.stdout.on('data', handler);
-      tunnelChild.stderr.on('data', handler);
-      tunnelChild.on('error', () => {
-        clearTimeout(timeout);
-        reject(new Error('cloudflared not found'));
-      });
-    });
-
-    tunnelChild.unref();
-    onLog(`[preview] URL: ${previewUrl}`);
-  } catch {
-    onLog('[preview] cloudflared failed, trying ngrok...');
-    try {
-      const ngrokChild = spawn('ngrok', ['http', String(port), '--log=stdout'], {
-        detached: true,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-
-      previewUrl = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('ngrok timeout')), 15000);
-        ngrokChild.stdout.on('data', (data) => {
-          const line = data.toString();
-          const match = line.match(/(https:\/\/[a-z0-9-]+\.ngrok[a-z.-]*\.[a-z]+)/);
-          if (match) {
-            clearTimeout(timeout);
-            resolve(match[1]);
-          }
-        });
-        ngrokChild.on('error', () => {
-          clearTimeout(timeout);
-          reject(new Error('ngrok not found'));
-        });
-      });
-
-      ngrokChild.unref();
-      onLog(`[preview] URL: ${previewUrl}`);
-    } catch {
-      onLog('[preview] No tunnel tool available (install cloudflared or ngrok)');
-      previewUrl = `http://localhost:${port}`;
-    }
-  }
-
-  return previewUrl;
 }
 
 async function runTask(projectPath, prompt, onLog) {
@@ -172,36 +92,38 @@ async function runTask(projectPath, prompt, onLog) {
     await spawnAsync('claude', ['-p', prompt, '--dangerously-skip-permissions'], projectPath, onLog);
   } catch (err) {
     onLog(`[task] Claude CLI error: ${err.message}`);
-    // Continue anyway - maybe partial changes were made
+    // Continue - maybe partial changes were made
   }
 
-  // Check if there are changes
-  const diff = execSync('git diff --stat', { cwd: projectPath, encoding: 'utf-8' }).trim();
-  if (!diff) {
+  // Check if there are any changes (staged, unstaged, or untracked)
+  const status = execSync('git status --porcelain', { cwd: projectPath, encoding: 'utf-8' }).trim();
+  if (!status) {
     onLog('[task] No changes were made');
     exec(`git checkout ${baseBranch}`, projectPath, onLog);
     exec(`git branch -D ${branchName}`, projectPath, onLog);
     return { status: 'error', error: 'No changes were made by AI' };
   }
 
-  onLog(`[task] Changes:\n${diff}`);
+  onLog(`[task] Changes detected:\n${status}`);
 
-  // Start preview
-  const previewUrl = await startPreview(projectPath, onLog);
-
-  // Git commit and push
-  exec('git add .', projectPath, onLog);
+  // Git add, commit, push
+  exec('git add -A', projectPath, onLog);
   const commitMsg = `AI: ${prompt.substring(0, 72)}`;
   exec(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, projectPath, onLog);
 
+  let pushOk = false;
   try {
     exec(`git push origin ${branchName}`, projectPath, onLog);
+    pushOk = true;
   } catch (err) {
-    onLog(`[task] Push failed: ${err.message}`);
+    onLog(`[task] Push failed (no remote?): ${err.message}`);
   }
 
   // Generate compare URL
-  const compareUrl = getGitHubCompareUrl(projectPath, baseBranch, branchName);
+  const compareUrl = pushOk ? getGitHubCompareUrl(projectPath, baseBranch, branchName) : null;
+
+  // Hardcoded preview URL for now
+  const previewUrl = 'http://localhost:3000';
 
   const result = {
     status: 'success',
