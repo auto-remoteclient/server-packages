@@ -1,0 +1,16 @@
+{
+  "name": "remote-dev-agent",
+  "version": "1.0.0",
+  "description": "Lightweight agent for Remote AI Dev Operator",
+  "main": "src/index.js",
+  "bin": {
+    "remote-dev-agent": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "uuid": "^9.0.0"
+  }
+}
