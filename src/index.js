@@ -56,10 +56,6 @@ function connect() {
       return;
     }
 
-    if (typeof msg.type === 'string' && msg.type.startsWith('terminal_')) {
-      console.log('[agent] terminal', msg.type);
-    }
-
     switch (msg.type) {
       case 'list_projects':
         const projects = await scanProjects();
@@ -89,7 +85,7 @@ function connect() {
         terminal.stopPolling();
         terminal.startPolling((output) => {
           send(output);
-        }, 450);
+        });
         if (msg.projectPath) {
           setTimeout(() => terminal.cdIntoProject(msg.projectPath), 500);
         }
@@ -119,7 +115,7 @@ function connect() {
           terminal.stopPolling();
           terminal.startPolling((output) => {
             send(output);
-          }, 450);
+          });
           setTimeout(() => terminal.runClaude(p), 1500);
         } else {
           terminal.runClaude(p);
